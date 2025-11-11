@@ -26,7 +26,7 @@ class AudioCapture:
         """
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
-        self.audio = pyaudio.PyAudio()
+        self.audio = None
         self.stream = None
         self.is_recording = False
         self.audio_queue = queue.Queue()
@@ -34,18 +34,36 @@ class AudioCapture:
         self.recording_thread = None
         self.callbacks = []
 
+        # Initialize PyAudio with error handling
+        try:
+            self.audio = pyaudio.PyAudio()
+        except Exception as e:
+            print(f"Error initializing PyAudio: {e}")
+            raise RuntimeError(f"Failed to initialize audio system: {e}")
+
     def list_devices(self) -> List[Dict]:
         """Get list of available audio input devices"""
+        if not self.audio:
+            return []
+
         devices = []
-        for i in range(self.audio.get_device_count()):
-            info = self.audio.get_device_info_by_index(i)
-            if info['maxInputChannels'] > 0:
-                devices.append({
-                    'index': i,
-                    'name': info['name'],
-                    'channels': info['maxInputChannels'],
-                    'sample_rate': int(info['defaultSampleRate'])
-                })
+        try:
+            for i in range(self.audio.get_device_count()):
+                try:
+                    info = self.audio.get_device_info_by_index(i)
+                    if info['maxInputChannels'] > 0:
+                        devices.append({
+                            'index': i,
+                            'name': info['name'],
+                            'channels': info['maxInputChannels'],
+                            'sample_rate': int(info['defaultSampleRate'])
+                        })
+                except Exception as e:
+                    print(f"Error getting device {i}: {e}")
+                    continue
+        except Exception as e:
+            print(f"Error listing devices: {e}")
+
         return devices
 
     def get_default_device(self) -> Optional[int]:
@@ -68,21 +86,31 @@ class AudioCapture:
         if self.is_recording:
             return
 
+        if not self.audio:
+            raise RuntimeError("Audio system not initialized")
+
         if device_index is None:
             device_index = self.get_default_device()
+
+        if device_index is None:
+            raise RuntimeError("No audio input device available")
 
         self.is_recording = True
         self.frames = []
 
-        # Open audio stream (no callback, use blocking mode)
-        self.stream = self.audio.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=self.sample_rate,
-            input=True,
-            input_device_index=device_index,
-            frames_per_buffer=self.chunk_size
-        )
+        try:
+            # Open audio stream (no callback, use blocking mode)
+            self.stream = self.audio.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=self.sample_rate,
+                input=True,
+                input_device_index=device_index,
+                frames_per_buffer=self.chunk_size
+            )
+        except Exception as e:
+            self.is_recording = False
+            raise RuntimeError(f"Failed to open audio stream: {e}")
 
         if on_audio_chunk:
             self.callbacks.append(on_audio_chunk)
@@ -192,4 +220,7 @@ class AudioCapture:
             self.stop_recording()
 
         if self.audio:
-            self.audio.terminate()
+            try:
+                self.audio.terminate()
+            except Exception as e:
+                print(f"Error terminating audio: {e}")

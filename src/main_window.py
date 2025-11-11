@@ -31,25 +31,31 @@ class TranscriptionWorker(QThread):
     error_occurred = pyqtSignal(str)
 
     def __init__(self, audio_capture: AudioCapture,
-                 transcription_engine: TranscriptionEngine):
+                 transcription_engine: TranscriptionEngine,
+                 device_index: Optional[int] = None):
         super().__init__()
         self.audio_capture = audio_capture
         self.transcription_engine = transcription_engine
+        self.device_index = device_index
         self.running = False
 
     def run(self):
         """Run the transcription worker"""
-        self.running = True
+        try:
+            self.running = True
 
-        # Start audio capture with callback
-        self.audio_capture.start_recording(
-            on_audio_chunk=self._on_audio_chunk
-        )
+            # Start audio capture with callback
+            self.audio_capture.start_recording(
+                device_index=self.device_index,
+                on_audio_chunk=self._on_audio_chunk
+            )
 
-        # Start transcription engine
-        self.transcription_engine.start(
-            on_segment=self._on_segment
-        )
+            # Start transcription engine
+            self.transcription_engine.start(
+                on_segment=self._on_segment
+            )
+        except Exception as e:
+            self.error_occurred.emit(f"Error starting recording: {e}")
 
     def stop(self):
         """Stop the worker"""
@@ -64,7 +70,8 @@ class TranscriptionWorker(QThread):
 
     def _on_segment(self, segment: TranscriptionSegment):
         """Handle new transcription segment"""
-        self.segment_ready.emit(segment)
+        if self.running:
+            self.segment_ready.emit(segment)
 
 
 class MainWindow(QMainWindow):
@@ -97,36 +104,53 @@ class MainWindow(QMainWindow):
     def init_components(self):
         """Initialize backend components"""
         # Audio capture
-        sample_rate = self.config.get('sample_rate', 16000)
-        self.audio_capture = AudioCapture(sample_rate=sample_rate)
+        try:
+            sample_rate = self.config.get('sample_rate', 16000)
+            self.audio_capture = AudioCapture(sample_rate=sample_rate)
+        except Exception as e:
+            QMessageBox.critical(
+                None,
+                'Audio System Error',
+                f'Failed to initialize audio system:\n{e}\n\nPlease check that your audio drivers are installed correctly.'
+            )
+            raise
 
         # Transcription engine
         openai_key = self.config.get('openai_api_key')
         if openai_key:
-            self.transcription_engine = TranscriptionEngine(
-                api_key=openai_key,
-                model=self.config.get('whisper_model', 'whisper-1'),
-                buffer_duration=self.config.get('buffer_duration', 5),
-                sample_rate=sample_rate
-            )
+            try:
+                self.transcription_engine = TranscriptionEngine(
+                    api_key=openai_key,
+                    model=self.config.get('whisper_model', 'whisper-1'),
+                    buffer_duration=self.config.get('buffer_duration', 5),
+                    sample_rate=sample_rate
+                )
+            except Exception as e:
+                print(f"Error initializing transcription engine: {e}")
 
         # Claude analyzer
         anthropic_key = self.config.get('anthropic_api_key')
         if anthropic_key:
-            self.claude_analyzer = ClaudeAnalyzer(
-                api_key=anthropic_key,
-                model=self.config.get('claude_model', 'claude-sonnet-4-20250514')
-            )
-            self.realtime_analyzer = RealTimeAnalyzer(self.claude_analyzer)
+            try:
+                self.claude_analyzer = ClaudeAnalyzer(
+                    api_key=anthropic_key,
+                    model=self.config.get('claude_model', 'claude-sonnet-4-20250514')
+                )
+                self.realtime_analyzer = RealTimeAnalyzer(self.claude_analyzer)
+            except Exception as e:
+                print(f"Error initializing Claude analyzer: {e}")
 
         # Google Drive uploader
         gdrive_creds = self.config.get('google_drive_credentials_path')
         gdrive_folder = self.config.get('google_drive_folder_id')
         if gdrive_creds:
-            self.gdrive_uploader = GDriveUploader(
-                credentials_path=gdrive_creds,
-                folder_id=gdrive_folder
-            )
+            try:
+                self.gdrive_uploader = GDriveUploader(
+                    credentials_path=gdrive_creds,
+                    folder_id=gdrive_folder
+                )
+            except Exception as e:
+                print(f"Error initializing Google Drive uploader: {e}")
 
     def init_ui(self):
         """Initialize user interface"""
@@ -378,9 +402,11 @@ class MainWindow(QMainWindow):
         # Create and start worker
         self.worker = TranscriptionWorker(
             self.audio_capture,
-            self.transcription_engine
+            self.transcription_engine,
+            device_index=device_index
         )
         self.worker.segment_ready.connect(self.on_transcription_segment, Qt.ConnectionType.QueuedConnection)
+        self.worker.error_occurred.connect(self.on_worker_error, Qt.ConnectionType.QueuedConnection)
         self.worker.start()
 
         # Start real-time analyzer if available
@@ -428,9 +454,16 @@ class MainWindow(QMainWindow):
         if self.worker:
             try:
                 self.worker.stop()
-                self.worker.wait(3000)  # Wait up to 3 seconds
+                # Wait for worker thread to finish with timeout
+                if not self.worker.wait(5000):  # Wait up to 5 seconds
+                    print("Warning: Worker thread did not finish in time")
+                    # Force quit the thread if it doesn't respond
+                    self.worker.terminate()
+                    self.worker.wait(1000)
             except Exception as e:
                 print(f"Error stopping worker: {e}")
+            finally:
+                self.worker = None
 
         # Update UI
         self.record_btn.setText('Start Recording')
@@ -461,19 +494,36 @@ class MainWindow(QMainWindow):
 
     def on_transcription_segment(self, segment: TranscriptionSegment):
         """Handle new transcription segment"""
-        # Append to transcript display
-        self.transcript_text.append(str(segment))
+        try:
+            # Append to transcript display
+            self.transcript_text.append(str(segment))
 
-        # Update real-time analyzer
-        if self.realtime_analyzer:
-            full_transcript = self.transcription_engine.get_full_transcript(False)
-            self.realtime_analyzer.update_transcript(full_transcript)
+            # Update real-time analyzer
+            if self.realtime_analyzer and self.transcription_engine:
+                full_transcript = self.transcription_engine.get_full_transcript(False)
+                if full_transcript:
+                    self.realtime_analyzer.update_transcript(full_transcript)
 
-        self.update_session_info()
+            self.update_session_info()
+        except Exception as e:
+            print(f"Error handling transcription segment: {e}")
 
     def on_realtime_analysis(self, analysis: str):
         """Handle real-time analysis update"""
         self.analysis_text.setPlainText(analysis)
+
+    def on_worker_error(self, error_message: str):
+        """Handle worker thread errors"""
+        print(f"Worker error: {error_message}")
+        self.status_label.setText(f'Error: {error_message}')
+        QMessageBox.critical(
+            self,
+            'Recording Error',
+            f'An error occurred during recording:\n{error_message}\n\nPlease try again.'
+        )
+        # Stop recording if error occurs
+        if self.is_recording:
+            self.stop_recording()
 
     def analyze_transcript(self):
         """Analyze current transcript"""
@@ -485,6 +535,10 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self.transcription_engine:
+            QMessageBox.warning(self, 'No Engine', 'Transcription engine not initialized.')
+            return
+
         full_transcript = self.transcription_engine.get_full_transcript(False)
 
         if not full_transcript:
@@ -494,16 +548,20 @@ class MainWindow(QMainWindow):
         self.status_label.setText('Analyzing...')
         QApplication.processEvents()
 
-        analysis = self.claude_analyzer.analyze_transcript(
-            full_transcript,
-            context=f"Meeting: {self.current_meeting_title}"
-        )
+        try:
+            analysis = self.claude_analyzer.analyze_transcript(
+                full_transcript,
+                context=f"Meeting: {self.current_meeting_title}"
+            )
 
-        if analysis:
-            self.analysis_text.setPlainText(analysis)
-            self.status_label.setText('Analysis complete')
-        else:
-            self.status_label.setText('Analysis failed')
+            if analysis:
+                self.analysis_text.setPlainText(analysis)
+                self.status_label.setText('Analysis complete')
+            else:
+                self.status_label.setText('Analysis failed')
+        except Exception as e:
+            self.status_label.setText('Analysis error')
+            QMessageBox.critical(self, 'Analysis Error', f'Failed to analyze transcript:\n{e}')
 
     def generate_summary(self):
         """Generate comprehensive meeting summary"""
@@ -515,6 +573,10 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self.transcription_engine:
+            QMessageBox.warning(self, 'No Engine', 'Transcription engine not initialized.')
+            return
+
         full_transcript = self.transcription_engine.get_full_transcript(False)
 
         if not full_transcript:
@@ -524,16 +586,20 @@ class MainWindow(QMainWindow):
         self.status_label.setText('Generating summary...')
         QApplication.processEvents()
 
-        summary = self.claude_analyzer.get_meeting_summary(
-            full_transcript,
-            meeting_title=self.current_meeting_title
-        )
+        try:
+            summary = self.claude_analyzer.get_meeting_summary(
+                full_transcript,
+                meeting_title=self.current_meeting_title
+            )
 
-        if summary:
-            self.analysis_text.setPlainText(summary)
-            self.status_label.setText('Summary complete')
-        else:
-            self.status_label.setText('Summary failed')
+            if summary:
+                self.analysis_text.setPlainText(summary)
+                self.status_label.setText('Summary complete')
+            else:
+                self.status_label.setText('Summary failed')
+        except Exception as e:
+            self.status_label.setText('Summary error')
+            QMessageBox.critical(self, 'Summary Error', f'Failed to generate summary:\n{e}')
 
     def update_duration(self):
         """Update recording duration display"""

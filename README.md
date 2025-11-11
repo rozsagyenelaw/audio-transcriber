@@ -2,6 +2,19 @@
 
 Real-time meeting transcription and legal analysis application for macOS.
 
+## ⚠️ IMPORTANT: Which Version to Use?
+
+**The GUI version has stability issues (Qt threading crashes).**
+
+**👉 We recommend using the CLI (terminal) version for reliable transcription!**
+
+- **CLI Version (Stable):** `./run_cli.sh` - See [CLI_QUICKSTART.md](CLI_QUICKSTART.md)
+- **GUI Version (Crashes):** `python3 src/main_window.py` - Instructions below
+
+**Need help choosing?** See [WHICH_VERSION.md](WHICH_VERSION.md)
+
+---
+
 ## Features
 
 - **Real-Time Transcription**: Live audio transcription using OpenAI Whisper API

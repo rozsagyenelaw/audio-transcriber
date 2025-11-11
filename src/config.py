@@ -19,6 +19,7 @@ class Config:
         "google_drive_credentials_path": "",
         "default_save_location": str(Path.home() / "Documents" / "Meeting Transcripts"),
         "auto_upload_drive": False,
+        "auto_save": False,
         "mic_device_index": None,
         "speaker_detection": False,
         "keep_audio_file": False,
