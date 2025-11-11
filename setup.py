@@ -9,7 +9,6 @@ APP = ['src/main_window.py']
 DATA_FILES = []
 OPTIONS = {
     'argv_emulation': False,
-    'iconfile': 'icons/app_icon.icns',  # Will create this
     'plist': {
         'CFBundleName': 'Meeting Transcriber',
         'CFBundleDisplayName': 'Meeting Transcriber',
