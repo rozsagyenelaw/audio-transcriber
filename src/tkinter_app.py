@@ -139,9 +139,13 @@ class TranscriberGUI:
             transcript_frame,
             wrap=tk.WORD,
             font=("Courier", 11),
-            height=25
+            height=25,
+            takefocus=1,
+            insertwidth=0
         )
         self.transcript_text.pack(fill=tk.BOTH, expand=True)
+        # Force update to ensure scrollbar is ready
+        self.transcript_text.update_idletasks()
 
         # Right side: Analysis
         analysis_frame = ttk.LabelFrame(main_frame, text="AI Analysis", padding="10")
@@ -151,9 +155,13 @@ class TranscriberGUI:
             analysis_frame,
             wrap=tk.WORD,
             font=("Arial", 10),
-            height=20
+            height=20,
+            takefocus=1,
+            insertwidth=0
         )
         self.analysis_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        # Force update to ensure scrollbar is ready
+        self.analysis_text.update_idletasks()
 
         # Analysis buttons
         button_frame = ttk.Frame(analysis_frame)
